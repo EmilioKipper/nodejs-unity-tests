@@ -17,48 +17,78 @@ export class StatementsRepository implements IStatementsRepository {
     user_id,
     amount,
     description,
-    type
+    sender_id,
+    type,
   }: ICreateStatementDTO): Promise<Statement> {
     const statement = this.repository.create({
       user_id,
       amount,
       description,
-      type
+      sender_id,
+      type,
     });
 
     return this.repository.save(statement);
   }
 
-  async findStatementOperation({ statement_id, user_id }: IGetStatementOperationDTO): Promise<Statement | undefined> {
+  async findStatementOperation({
+    statement_id,
+    user_id,
+  }: IGetStatementOperationDTO): Promise<Statement | undefined> {
     return this.repository.findOne(statement_id, {
-      where: { user_id }
+      where: { user_id },
     });
   }
 
-  async getUserBalance({ user_id, with_statement = false }: IGetBalanceDTO):
-    Promise<
-      { balance: number } | { balance: number, statement: Statement[] }
-    >
-  {
+  async getUserBalance({
+    user_id,
+    with_statement = false,
+  }: IGetBalanceDTO): Promise<
+    { balance: number } | { balance: number; statement: Statement[] }
+  > {
     const statement = await this.repository.find({
-      where: { user_id }
+      where: { user_id },
+    });
+    const statementTransfer = await this.repository.find({
+      select: [
+        "id",
+        "user_id",
+        "description",
+        "amount",
+        "type",
+        "created_at",
+        "updated_at",
+      ],
+      where: { sender_id: user_id },
     });
 
-    const balance = statement.reduce((acc, operation) => {
-      if (operation.type === 'deposit') {
-        return acc + operation.amount;
+    const depositWithdrawBalance = statement.reduceRight((acc, operation) => {
+      if (operation.type === "transfer" && operation.sender_id !== user_id) {
+        return acc + Number(operation.amount);
       } else {
-        return acc - operation.amount;
+        if (operation.type === "deposit") {
+          return acc + Number(operation.amount);
+        } else {
+          return acc - Number(operation.amount);
+        }
       }
-    }, 0)
+    }, 0);
+
+    const transferBalance = await statementTransfer.reduce(
+      (acc, operation) => acc - operation.amount,
+      0
+    );
+
+    const balance = depositWithdrawBalance + transferBalance;
+    const allStatements = statement.concat(statementTransfer);
 
     if (with_statement) {
       return {
-        statement,
-        balance
-      }
+        statement: allStatements,
+        balance,
+      };
     }
 
-    return { balance }
+    return { balance };
   }
 }
